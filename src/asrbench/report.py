@@ -1,7 +1,7 @@
 """Build results/report.md from a manifest and a folder of hypothesis files.
 
 One table per language: WER under each scoring mode with 95% bootstrap CIs,
-CER, LLM-WER if judge verdicts exist, error buckets, and a paired test of
+CER, LLM-WER if a judge is given (only for the languages asked for), error buckets, and a paired test of
 every system against the best one.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _systems(results_dir: Path) -> dict[str, Path]:
     return {p.stem: p for p in sorted(results_dir.glob("hyp_*.jsonl"))}
 
 
-def build(manifest: str, results_dir: str = "results", judge=None, n_boot: int = 2000) -> str:
+def build(manifest: str, results_dir: str = "results", judge=None, n_boot: int = 2000, judge_langs=None) -> str:
     rows = read_manifest(manifest)
     rdir = Path(results_dir)
     systems = _systems(rdir)
@@ -58,13 +58,13 @@ def build(manifest: str, results_dir: str = "results", judge=None, n_boot: int =
                     bucket_rows.append((name, bucket_counts([s.alignment for s in sc])))
                     basic = sc
             row = f"| {name.removeprefix('hyp_')} | " + " | ".join(cells) + f" | {cer.fmt()} |"
-            if judge:
+            if judge and judge_langs and lang not in judge_langs:
+                row += " n/a |"
+            elif judge:
                 from .judge import llm_errors
 
-                errs = []
-                for s in basic:
-                    pairs, same = judge.judge(refs[s.id], hyps.get(s.id, ""), s)
-                    errs.append(llm_errors(pairs, same))
+                res = judge.judge_many([(refs[s.id], hyps.get(s.id, ""), s) for s in basic])
+                errs = [llm_errors(pairs, same) for pairs, same in res]
                 row += f" {bootstrap_ci(errs, [s.ref_words for s in basic], n_boot=n_boot).fmt()} |"
             out.append(row)
 

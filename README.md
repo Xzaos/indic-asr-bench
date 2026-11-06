@@ -70,7 +70,7 @@ Individual steps:
 asrbench prepare --dataset google/fleurs --config hi_in --split test --text-field raw_transcription --lang hi --n 150 --tag fleurs_hi
 asrbench transcribe whisper --manifest data/fleurs_hi/manifest.jsonl --model-id openai/whisper-large-v3 --name whisper-large-v3
 asrbench report --manifest data/fleurs_hi/manifest.jsonl
-asrbench label-export --manifest data/fleurs_hi/manifest.jsonl --judge-model sarvam-m --judge-base-url https://api.sarvam.ai/v1
+asrbench label-export --manifest data/fleurs_hi/manifest.jsonl --judge-model sarvam-105b --judge-base-url https://api.sarvam.ai/v1
 asrbench label-score results/judge_labels.csv
 ```
 

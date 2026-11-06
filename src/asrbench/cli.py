@@ -40,37 +40,38 @@ def _judge(a):
         return None
     from .judge import Judge
 
-    return Judge(a.judge_model, a.judge_base_url, cache=str(Path(a.results) / "judge_cache.jsonl"))
+    return Judge(a.judge_model, a.judge_base_url, cache=str(Path(a.results) / "judge_cache.jsonl"), workers=a.judge_workers)
 
 
 def cmd_report(a):
     from .report import build
 
-    print(build(a.manifest, a.results, judge=_judge(a), n_boot=a.n_boot))
+    langs = None if "all" in a.judge_lang else set(a.judge_lang)
+    print(build(a.manifest, a.results, judge=_judge(a), n_boot=a.n_boot, judge_langs=langs))
 
 
 def cmd_label_export(a):
     from .data import read_hyps, read_manifest
+    from .judge import _pairs
     from .metrics import score_all
-    from .validate import export_sample
+    from .validate import sample_pairs, write_sample
 
-    judge = _judge(a)
     refs = {r["id"]: r["text"] for r in read_manifest(a.manifest)}
     records = []
     for path in sorted(Path(a.results).glob("hyp_*.jsonl")):
         hyps = read_hyps(path)
         for s in score_all(refs, {k: v for k, v in hyps.items() if k in refs}, "basic"):
-            if not s.word_errors:
-                continue
-            if judge:
-                pairs, same = judge.judge(refs[s.id], hyps.get(s.id, ""), s)
-            else:
-                from .judge import _pairs
-
-                pairs, same = _pairs(s), [""] * s.word_errors
-            for p, j in zip(pairs, same):
-                records.append({"system": path.stem.removeprefix("hyp_"), "id": s.id, "bucket": p["bucket"], "ref_tok": p["ref"], "hyp_tok": p["hyp"], "ref": refs[s.id], "hyp": hyps.get(s.id, ""), "judge_same": int(j) if j != "" else ""})
-    export_sample(records, a.out, n=a.n, seed=a.seed)
+            for idx, p in enumerate(_pairs(s)):
+                records.append({"system": path.stem.removeprefix("hyp_"), "id": s.id, "bucket": p["bucket"], "ref_tok": p["ref"], "hyp_tok": p["hyp"], "ref": refs[s.id], "hyp": hyps.get(s.id, ""), "judge_same": "", "_score": s, "_idx": idx})
+    picked = sample_pairs(records, n=a.n, seed=a.seed)
+    judge = _judge(a)
+    if judge:
+        utts = {(r["system"], r["id"]): r for r in picked}
+        res = judge.judge_many([(r["ref"], r["hyp"], r["_score"]) for r in utts.values()])
+        verdicts = dict(zip(utts, (same for _, same in res)))
+        for r in picked:
+            r["judge_same"] = int(verdicts[(r["system"], r["id"])][r["_idx"]])
+    write_sample(picked, a.out)
     print(f"wrote {a.out}; fill human_same with 1 or 0")
 
 
@@ -121,7 +122,10 @@ def main(argv=None):
         s.add_argument("--results", default="results")
         s.add_argument("--judge-model")
         s.add_argument("--judge-base-url")
+        s.add_argument("--judge-workers", type=int, default=8)
         s.add_argument("--n-boot", type=int, default=2000)
+        if name == "report":
+            s.add_argument("--judge-lang", nargs="+", default=["all"], help="languages to compute LLM-WER for")
         if name == "label-export":
             s.add_argument("--out", default="results/judge_labels.csv")
             s.add_argument("--n", type=int, default=50)

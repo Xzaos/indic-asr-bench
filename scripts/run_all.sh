@@ -23,9 +23,9 @@ asrbench transcribe saaras:v4 --manifest data/test.jsonl --mode transcribe --nam
 asrbench transcribe saaras:v4 --manifest data/test.jsonl --mode codemix --name saaras-v4-codemix
 
 asrbench report --manifest data/test.jsonl \
-  --judge-model "${JUDGE_MODEL:-sarvam-m}" --judge-base-url "${JUDGE_BASE_URL:-https://api.sarvam.ai/v1}"
+  --judge-model "${JUDGE_MODEL:-sarvam-105b}" --judge-base-url "${JUDGE_BASE_URL:-https://api.sarvam.ai/v1}"
 
 # Judge check: label the 50 sampled pairs by hand, then score.
-asrbench label-export --manifest data/test.jsonl --judge-model "${JUDGE_MODEL:-sarvam-m}" \
+asrbench label-export --manifest data/test.jsonl --judge-model "${JUDGE_MODEL:-sarvam-105b}" \
   --judge-base-url "${JUDGE_BASE_URL:-https://api.sarvam.ai/v1}" --n 50
 echo "now fill results/judge_labels.csv and run: asrbench label-score results/judge_labels.csv"

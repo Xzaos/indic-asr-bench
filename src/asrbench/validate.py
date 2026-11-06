@@ -12,7 +12,7 @@ import random
 from collections import Counter, defaultdict
 
 
-def export_sample(records: list[dict], out_csv: str, n: int = 50, seed: int = 0) -> None:
+def sample_pairs(records: list[dict], n: int = 50, seed: int = 0) -> list[dict]:
     by_bucket = defaultdict(list)
     for r in records:
         by_bucket[r["bucket"]].append(r)
@@ -26,12 +26,20 @@ def export_sample(records: list[dict], out_csv: str, n: int = 50, seed: int = 0)
             if pools[b] and len(picked) < n:
                 picked.append(pools[b].pop())
     rng.shuffle(picked)
+    return picked
+
+
+def write_sample(picked: list[dict], out_csv: str) -> None:
     fields = ["system", "id", "bucket", "ref_tok", "hyp_tok", "ref", "hyp", "judge_same", "human_same"]
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in picked:
             w.writerow({k: r.get(k, "") for k in fields} | {"human_same": ""})
+
+
+def export_sample(records: list[dict], out_csv: str, n: int = 50, seed: int = 0) -> None:
+    write_sample(sample_pairs(records, n, seed), out_csv)
 
 
 def cohen_kappa(a: list[int], b: list[int]) -> float:
