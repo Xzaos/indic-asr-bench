@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+from collections import Counter
 from pathlib import Path
 from typing import Iterator
 
@@ -25,6 +26,24 @@ def write_jsonl(path: str | Path, rows) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def duration(path: str | Path) -> float:
+    import soundfile as sf
+
+    return sf.info(str(path)).duration
+
+
+def filter_long(rows: list[dict], max_sec: float) -> tuple[list[dict], Counter]:
+    """Drop clips longer than max_sec. Returns the kept rows and a per-language
+    count of what was dropped."""
+    kept, dropped = [], Counter()
+    for r in rows:
+        if duration(r["audio"]) > max_sec:
+            dropped[r["lang"]] += 1
+        else:
+            kept.append(r)
+    return kept, dropped
 
 
 def read_hyps(path: str | Path) -> dict[str, str]:
@@ -64,10 +83,11 @@ def prepare_hf(
     n: int,
     seed: int = 0,
     tag: str | None = None,
+    max_sec: float = 30,
 ) -> Path:
     """Sample n utterances from a Hugging Face audio dataset into wavs + a
     manifest. Sampling is seeded so the test set is reproducible from the
-    command line alone."""
+    command line alone. Clips longer than max_sec are dropped after sampling."""
     from datasets import Audio, load_dataset
 
     # FLEURS still ships as a loading script, which needs datasets<4 and
@@ -79,26 +99,35 @@ def prepare_hf(
 
     tag = tag or f"{dataset.split('/')[-1]}_{lang}"
     root = Path(out_dir) / tag
-    rows = []
+    rows, dropped = [], 0
     for k in picks:
         ex = ds[k]
+        if len(ex["audio"]["array"]) / SR > max_sec:
+            dropped += 1
+            continue
         uid = f"{tag}_{k:06d}"
         wav = root / "wav" / f"{uid}.wav"
         _save_wav(wav, ex["audio"]["array"], ex["audio"]["sampling_rate"])
         rows.append({"id": uid, "audio": str(wav), "text": ex[text_field], "lang": lang})
     manifest = root / "manifest.jsonl"
     write_jsonl(manifest, rows)
+    if dropped:
+        print(f"dropped {dropped} {lang} clips longer than {max_sec:g} s")
     return manifest
 
 
-def prepare_folder(folder: str, lang: str, out: str, tsv: str = "transcripts.tsv") -> Path:
+def prepare_folder(folder: str, lang: str, out: str, tsv: str = "transcripts.tsv", max_sec: float = 30) -> Path:
     """For hand-collected sets (e.g. Hinglish clips): a folder of wavs plus a
-    tab-separated file of filename<TAB>reference."""
+    tab-separated file of filename<TAB>reference. Clips longer than max_sec
+    are dropped."""
     folder_p = Path(folder)
     rows = []
     with open(folder_p / tsv, encoding="utf-8") as f:
         for name, text in csv.reader(f, delimiter="\t"):
             rows.append({"id": Path(name).stem, "audio": str(folder_p / name), "text": text, "lang": lang})
+    rows, dropped = filter_long(rows, max_sec)
+    if dropped:
+        print(f"dropped {dropped[lang]} {lang} clips longer than {max_sec:g} s")
     write_jsonl(out, rows)
     return Path(out)
 

@@ -9,9 +9,20 @@ def cmd_prepare(a):
     from .data import prepare_folder, prepare_hf
 
     if a.folder:
-        print(prepare_folder(a.folder, a.lang, a.out))
+        print(prepare_folder(a.folder, a.lang, a.out, max_sec=a.max_sec))
     else:
-        print(prepare_hf(a.dataset, a.config, a.split, a.lang, a.text_field, a.out, a.n, a.seed, a.tag))
+        print(prepare_hf(a.dataset, a.config, a.split, a.lang, a.text_field, a.out, a.n, a.seed, a.tag, a.max_sec))
+
+
+def cmd_filter(a):
+    from .data import filter_long, read_manifest, write_jsonl
+
+    rows = read_manifest(a.manifest)
+    kept, dropped = filter_long(rows, a.max_sec)
+    write_jsonl(a.out, kept)
+    for lang in sorted({r["lang"] for r in rows}):
+        print(f"{lang}: dropped {dropped[lang]} of {sum(r['lang'] == lang for r in rows)} clips longer than {a.max_sec:g} s")
+    print(a.out)
 
 
 def cmd_transcribe(a):
@@ -99,8 +110,15 @@ def main(argv=None):
     s.add_argument("--n", type=int, default=150)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--tag")
+    s.add_argument("--max-sec", type=float, default=30)
     s.add_argument("--out", default="data")
     s.set_defaults(fn=cmd_prepare)
+
+    s = sub.add_parser("filter", help="drop clips longer than --max-sec from a manifest")
+    s.add_argument("--manifest", required=True)
+    s.add_argument("--max-sec", type=float, default=30)
+    s.add_argument("--out", required=True)
+    s.set_defaults(fn=cmd_filter)
 
     s = sub.add_parser("transcribe")
     s.add_argument("backend", help="whisper | indicconformer | saaras:v3 | saarika:v2.5")

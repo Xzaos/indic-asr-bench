@@ -90,6 +90,8 @@ Within a run of consecutive errors, the aligner's choice of which token is a del
 
 ## Limitations
 
+Whisper truncates audio at 30 s and the Sarvam REST API rejects anything longer, so clips over 30 s are dropped from the manifest (`asrbench filter`, or `--max-sec` on `prepare`) and are excluded for every system.
+
 FLEURS is read speech. It says little about conversational or telephone audio, where the gap between these systems is likely larger.
 
 The number-format bucket only detects that digits are involved; it doesn't verify that "500" and "पांच सौ" are the same number.
