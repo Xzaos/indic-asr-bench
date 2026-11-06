@@ -8,6 +8,11 @@ LLM-WER = (errors judged real) / (reference words).
 Verdicts are cached on disk, keyed by a hash of the prompt, so rerunning the
 report costs nothing and the exact verdicts behind a number can be inspected.
 
+A reply that cannot be parsed, or a call that keeps failing, gives verdicts of
+None (unknown). LLM-WER counts unknown as an error, but the report says how
+many utterances fell back, and raw unparsable replies are kept in
+judge_failures.jsonl next to the cache.
+
 Any OpenAI-compatible chat endpoint works. Sarvam's own chat API, a local
 vLLM server and OpenAI all fit.
 """
@@ -19,6 +24,7 @@ import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,6 +32,8 @@ from .data import read_manifest
 from .failures import classify
 from .metrics import UttScore
 
+RETRIES = 3
+TIMEOUT = 300
 PROMPT_VERSION = "v1"
 log = logging.getLogger(__name__)
 _THINK = re.compile(r"<think>.*?</think>", re.S)
@@ -87,10 +95,12 @@ class Judge:
     def __init__(self, model: str, base_url: str | None = None, api_key_env: str = "JUDGE_API_KEY", cache: str = "results/judge_cache.jsonl", workers: int = 8):
         self.model = model
         self.workers = workers
+        self.backoff = 2.0
         self._lock = threading.Lock()
         self.base_url = (base_url or os.environ.get("JUDGE_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         self.key = os.environ.get(api_key_env, "")
         self.cache_path = Path(cache)
+        self.failures_path = self.cache_path.with_name("judge_failures.jsonl")
         self.cache: dict[str, list[bool]] = {}
         if self.cache_path.exists():
             for row in read_manifest(self.cache_path):
@@ -99,7 +109,7 @@ class Judge:
     def _key(self, prompt: str) -> str:
         return hashlib.sha1(f"{PROMPT_VERSION}|{self.model}|{prompt}".encode()).hexdigest()
 
-    def _call(self, prompt: str, n: int) -> list[bool] | None:
+    def _post(self, prompt: str) -> str:
         import httpx
 
         body = {
@@ -107,19 +117,40 @@ class Judge:
             "temperature": 0,
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
         }
-        r = httpx.post(f"{self.base_url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.key}"}, timeout=120)
+        r = httpx.post(f"{self.base_url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.key}"}, timeout=TIMEOUT)
         r.raise_for_status()
-        return parse_verdicts(r.json()["choices"][0]["message"]["content"] or "", n)
+        return r.json()["choices"][0]["message"]["content"] or ""
+
+    def _call(self, prompt: str, n: int) -> list[bool] | None:
+        import httpx
+
+        for attempt in range(RETRIES):
+            try:
+                text = self._post(prompt)
+                break
+            except httpx.HTTPError as e:
+                log.warning("judge request failed (%d/%d): %r", attempt + 1, RETRIES, e)
+                if attempt + 1 < RETRIES:
+                    time.sleep(self.backoff * 2**attempt)
+        else:
+            return None
+        same = parse_verdicts(text, n)
+        if same is None:
+            with self._lock:
+                self.failures_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.failures_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"model": self.model, "prompt": prompt, "raw": text}, ensure_ascii=False) + "\n")
+        return same
 
     def _verdicts(self, prompt: str, n: int, uid: str) -> list[bool] | None:
         for _ in range(2):
             same = self._call(prompt, n)
             if same is not None:
                 return same
-        log.warning("judge response unparsable twice for %s, counting all %d pairs as errors", uid, n)
+        log.warning("judge gave no usable verdicts for %s, recording %d pairs as unknown", uid, n)
         return None
 
-    def judge(self, ref: str, hyp: str, score: UttScore) -> tuple[list[dict], list[bool]]:
+    def judge(self, ref: str, hyp: str, score: UttScore) -> tuple[list[dict], list[bool | None]]:
         pairs = _pairs(score)
         if not pairs:
             return pairs, []
@@ -130,7 +161,7 @@ class Judge:
             same = self._verdicts(prompt, len(pairs), score.id)
             if same is None:
                 # Not cached, so a rerun tries again.
-                return pairs, [False] * len(pairs)
+                return pairs, [None] * len(pairs)
             with self._lock:
                 self.cache[key] = same
                 self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,10 +169,10 @@ class Judge:
                     f.write(json.dumps({"key": key, "same": same}) + "\n")
         return pairs, same
 
-    def judge_many(self, items: list[tuple[str, str, UttScore]]) -> list[tuple[list[dict], list[bool]]]:
+    def judge_many(self, items: list[tuple[str, str, UttScore]]) -> list[tuple[list[dict], list[bool | None]]]:
         with ThreadPoolExecutor(max_workers=self.workers) as ex:
             return list(ex.map(lambda t: self.judge(*t), items))
 
 
-def llm_errors(pairs: list[dict], same: list[bool]) -> int:
+def llm_errors(pairs: list[dict], same: list[bool | None]) -> int:
     return sum(p["ops"] for p, s in zip(pairs, same) if not s)

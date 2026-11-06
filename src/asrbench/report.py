@@ -41,6 +41,7 @@ def build(manifest: str, results_dir: str = "results", judge=None, n_boot: int =
 
         primary = {}
         bucket_rows = []
+        fallbacks = []
         for name, path in systems.items():
             hyps = {k: v for k, v in read_hyps(path).items() if k in refs}
             if not hyps:
@@ -65,10 +66,17 @@ def build(manifest: str, results_dir: str = "results", judge=None, n_boot: int =
 
                 res = judge.judge_many([(refs[s.id], hyps.get(s.id, ""), s) for s in basic])
                 errs = [llm_errors(pairs, same) for pairs, same in res]
+                n_fb = sum(None in same for _, same in res)
+                if n_fb:
+                    fallbacks.append((name.removeprefix("hyp_"), n_fb))
                 row += f" {bootstrap_ci(errs, [s.ref_words for s in basic], n_boot=n_boot).fmt()} |"
             out.append(row)
 
         out.append("\nWER in %, 95% bootstrap interval over utterances in brackets.\n")
+        if fallbacks:
+            total = sum(n for _, n in fallbacks)
+            per = ", ".join(f"{k}: {n}" for k, n in fallbacks)
+            out.append(f"Judge fell back to unknown (counted as errors) for {total} utterances ({per}).\n")
 
         if len(primary) > 1:
             best = min(primary, key=lambda k: sum(s.word_errors for s in primary[k]))

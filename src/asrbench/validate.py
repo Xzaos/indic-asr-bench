@@ -52,7 +52,10 @@ def cohen_kappa(a: list[int], b: list[int]) -> float:
 
 def score_labels(csv_path: str) -> dict:
     with open(csv_path, encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f) if r["human_same"].strip() in ("0", "1")]
+        labelled = [r for r in csv.DictReader(f) if r["human_same"].strip() in ("0", "1")]
+    # A blank judge_same means the judge fell back to unknown, so there is no
+    # verdict to compare against.
+    rows = [r for r in labelled if r["judge_same"].strip()]
     if not rows:
         raise ValueError("no labelled rows; fill human_same with 1 (same content) or 0 (real error)")
     j = [int(r["judge_same"] in ("1", "True", "true")) for r in rows]
@@ -64,6 +67,7 @@ def score_labels(csv_path: str) -> dict:
         per_bucket[r["bucket"]][1] += 1
     return {
         "n": len(rows),
+        "judge_unknown": len(labelled) - len(rows),
         "agreement": sum(x == y for x, y in zip(h, j)) / len(rows),
         "kappa": cohen_kappa(h, j),
         # The judge being too lenient (calling real errors "same") is the

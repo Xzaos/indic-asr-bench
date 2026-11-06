@@ -62,12 +62,13 @@ def test_retry_once_then_succeed(tmp_path, monkeypatch):
     assert same == [True, False]
 
 
-def test_two_failures_count_as_errors_and_are_logged_not_cached(tmp_path, monkeypatch, caplog):
+def test_two_failures_are_unknown_counted_as_errors_and_not_cached(tmp_path, monkeypatch, caplog):
     calls = []
     monkeypatch.setattr(Judge, "_call", lambda self, prompt, n: calls.append(1))
     j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
     pairs, same = j.judge(*_score())
-    assert same == [False] * len(pairs) and len(calls) == 2
+    assert same == [None] * len(pairs) and len(calls) == 2
+    assert llm_errors(pairs, same) == sum(p['ops'] for p in pairs)
     assert "for u," in caplog.text
     assert not (tmp_path / "c.jsonl").exists()
 
@@ -126,3 +127,71 @@ def test_label_export_judges_only_sampled_utterances(tmp_path, monkeypatch):
     rows = list(csv.DictReader(open(out, encoding="utf-8")))
     assert len(rows) == 1 and rows[0]["judge_same"] == "1"
     assert len(seen) == 1 and rows[0]["ref"] in seen[0]
+
+
+def _judge_with_posts(tmp_path, monkeypatch, posts):
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    j.backoff = 0
+    calls = []
+
+    def post(prompt):
+        calls.append(1)
+        r = posts[min(len(calls), len(posts)) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(j, "_post", post)
+    return j, calls
+
+
+def test_timeout_and_transport_errors_are_retried(tmp_path, monkeypatch):
+    import httpx
+
+    good = '{"verdicts": [{"i": 1, "same": true}, {"i": 2, "same": false}]}'
+    j, calls = _judge_with_posts(tmp_path, monkeypatch, [httpx.ReadTimeout("slow"), httpx.ConnectError("down"), good])
+    _, same = j.judge(*_score())
+    assert same == [True, False] and len(calls) == 3
+
+
+def test_persistent_transport_error_gives_unknown_without_crashing(tmp_path, monkeypatch):
+    import httpx
+
+    j, calls = _judge_with_posts(tmp_path, monkeypatch, [httpx.ReadTimeout("slow")])
+    pairs, same = j.judge(*_score())
+    assert same == [None] * len(pairs)
+    assert len(calls) == 6
+
+
+def test_unparsable_reply_is_appended_to_failures_file(tmp_path, monkeypatch):
+    j, _ = _judge_with_posts(tmp_path, monkeypatch, ["sorry, cannot do that"])
+    j.judge(*_score())
+    rows = [json.loads(x) for x in (tmp_path / "judge_failures.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2 and rows[0]["raw"] == "sorry, cannot do that" and "Reference:" in rows[0]["prompt"]
+
+
+def test_report_prints_fallback_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(Judge, "_call", lambda self, prompt, n: None)
+    man = _write_run(tmp_path)
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    text = build(str(man), str(tmp_path), judge=j, n_boot=50, judge_langs={"hi"})
+    assert "fell back to unknown (counted as errors) for 1 utterances (sys: 1)" in text
+
+
+def test_label_export_leaves_judge_same_blank_for_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(Judge, "_call", lambda self, prompt, n: None)
+    man = _write_run(tmp_path)
+    out = tmp_path / "labels.csv"
+    main(["label-export", "--manifest", str(man), "--results", str(tmp_path), "--judge-model", "fake",
+          "--judge-base-url", "http://unused", "--n", "10", "--out", str(out)])
+    rows = list(csv.DictReader(open(out, encoding="utf-8")))
+    assert rows and all(r["judge_same"] == "" for r in rows)
+
+
+def test_label_score_skips_rows_without_a_judge_verdict(tmp_path):
+    from asrbench.validate import score_labels
+
+    path = tmp_path / "l.csv"
+    path.write_text("bucket,judge_same,human_same\nlexical,1,1\nlexical,,0\nlexical,0,1\n", encoding="utf-8")
+    res = score_labels(str(path))
+    assert res["n"] == 2 and res["judge_unknown"] == 1 and res["agreement"] == 0.5

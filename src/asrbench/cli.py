@@ -81,7 +81,8 @@ def cmd_label_export(a):
         res = judge.judge_many([(r["ref"], r["hyp"], r["_score"]) for r in utts.values()])
         verdicts = dict(zip(utts, (same for _, same in res)))
         for r in picked:
-            r["judge_same"] = int(verdicts[(r["system"], r["id"])][r["_idx"]])
+            v = verdicts[(r["system"], r["id"])][r["_idx"]]
+            r["judge_same"] = "" if v is None else int(v)
     write_sample(picked, a.out)
     print(f"wrote {a.out}; fill human_same with 1 or 0")
 
