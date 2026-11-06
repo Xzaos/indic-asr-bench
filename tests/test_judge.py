@@ -269,3 +269,17 @@ def test_truncated_reply_is_logged_with_finish_reason(tmp_path, monkeypatch):
     _, same = j.judge(*_score())
     rows = [json.loads(x) for x in (tmp_path / "judge_failures.jsonl").read_text(encoding="utf-8").splitlines()]
     assert same == [None, None] and rows and all(r["finish_reason"] == "length" for r in rows)
+
+
+def test_judge_reasoning_choices(tmp_path, monkeypatch):
+    import pytest
+
+    man = _write_run(tmp_path)
+    base = ["report", "--manifest", str(man), "--results", str(tmp_path)]
+    for bad in ("none", "max"):
+        with pytest.raises(SystemExit):
+            main(base + ["--judge-reasoning", bad])
+    seen = []
+    monkeypatch.setattr(Judge, "_call", lambda self, prompt, n: seen.append(self.reasoning) or [True] * n)
+    main(base + ["--judge-model", "fake", "--judge-base-url", "http://unused", "--n-boot", "20", "--judge-reasoning", "medium"])
+    assert set(seen) == {"medium"}

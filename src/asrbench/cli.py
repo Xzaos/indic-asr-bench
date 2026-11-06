@@ -142,7 +142,7 @@ def main(argv=None):
         s.add_argument("--judge-model")
         s.add_argument("--judge-base-url")
         s.add_argument("--judge-workers", type=int, default=8)
-        s.add_argument("--judge-reasoning", default="low", choices=["none", "low", "high", "max"])
+        s.add_argument("--judge-reasoning", default="low", choices=["low", "medium", "high"])
         s.add_argument("--n-boot", type=int, default=2000)
         if name == "report":
             s.add_argument("--judge-lang", nargs="+", default=["all"], help="languages to compute LLM-WER for")
