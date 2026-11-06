@@ -67,7 +67,7 @@ def cmd_label_export(a):
     from .metrics import score_all
     from .validate import sample_pairs, write_sample
 
-    refs = {r["id"]: r["text"] for r in read_manifest(a.manifest)}
+    refs = {r["id"]: r["text"] for r in read_manifest(a.manifest) if not a.lang or r["lang"] == a.lang}
     records = []
     for path in sorted(Path(a.results).glob("hyp_*.jsonl")):
         hyps = read_hyps(path)
@@ -148,6 +148,7 @@ def main(argv=None):
         if name == "label-export":
             s.add_argument("--out", default="results/judge_labels.csv")
             s.add_argument("--n", type=int, default=50)
+            s.add_argument("--lang", help="only sample this language")
             s.add_argument("--seed", type=int, default=0)
         s.set_defaults(fn=fn)
 

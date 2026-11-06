@@ -195,3 +195,12 @@ def test_label_score_skips_rows_without_a_judge_verdict(tmp_path):
     path.write_text("bucket,judge_same,human_same\nlexical,1,1\nlexical,,0\nlexical,0,1\n", encoding="utf-8")
     res = score_labels(str(path))
     assert res["n"] == 2 and res["judge_unknown"] == 1 and res["agreement"] == 0.5
+
+
+def test_label_export_lang_filter(tmp_path, monkeypatch):
+    monkeypatch.setattr(Judge, "_call", lambda self, prompt, n: [True] * n)
+    man = _write_run(tmp_path)
+    out = tmp_path / "labels.csv"
+    main(["label-export", "--manifest", str(man), "--results", str(tmp_path), "--n", "10", "--lang", "hi", "--out", str(out)])
+    rows = list(csv.DictReader(open(out, encoding="utf-8")))
+    assert rows and {r["id"] for r in rows} == {"h1"}
