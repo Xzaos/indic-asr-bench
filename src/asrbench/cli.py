@@ -51,7 +51,7 @@ def _judge(a):
         return None
     from .judge import Judge
 
-    return Judge(a.judge_model, a.judge_base_url, cache=str(Path(a.results) / "judge_cache.jsonl"), workers=a.judge_workers)
+    return Judge(a.judge_model, a.judge_base_url, cache=str(Path(a.results) / "judge_cache.jsonl"), workers=a.judge_workers, reasoning=a.judge_reasoning)
 
 
 def cmd_report(a):
@@ -142,6 +142,7 @@ def main(argv=None):
         s.add_argument("--judge-model")
         s.add_argument("--judge-base-url")
         s.add_argument("--judge-workers", type=int, default=8)
+        s.add_argument("--judge-reasoning", default="low", choices=["none", "low", "high", "max"])
         s.add_argument("--n-boot", type=int, default=2000)
         if name == "report":
             s.add_argument("--judge-lang", nargs="+", default=["all"], help="languages to compute LLM-WER for")

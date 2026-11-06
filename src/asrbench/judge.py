@@ -35,7 +35,8 @@ from .metrics import UttScore
 
 RETRIES = 3
 TIMEOUT = 300
-PROMPT_VERSION = "v1"
+MAX_TOKENS = 4096
+PROMPT_VERSION = "v2"
 log = logging.getLogger(__name__)
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
@@ -98,9 +99,10 @@ class JudgeClientError(RuntimeError):
 
 
 class Judge:
-    def __init__(self, model: str, base_url: str | None = None, api_key_env: str = "JUDGE_API_KEY", cache: str = "results/judge_cache.jsonl", workers: int = 8):
+    def __init__(self, model: str, base_url: str | None = None, api_key_env: str = "JUDGE_API_KEY", cache: str = "results/judge_cache.jsonl", workers: int = 8, reasoning: str = "low"):
         self.model = model
         self.workers = workers
+        self.reasoning = reasoning
         self.backoff = 2.0
         self._lock = threading.Lock()
         self.base_url = (base_url or os.environ.get("JUDGE_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
@@ -113,28 +115,32 @@ class Judge:
                 self.cache[row["key"]] = row["same"]
 
     def _key(self, prompt: str) -> str:
-        return hashlib.sha1(f"{PROMPT_VERSION}|{self.model}|{prompt}".encode()).hexdigest()
+        return hashlib.sha1(f"{PROMPT_VERSION}|{self.model}|{self.reasoning}|{prompt}".encode()).hexdigest()
 
-    def _post(self, prompt: str) -> str:
+    def _post(self, prompt: str) -> tuple[str, str | None]:
         import httpx
 
         body = {
             "model": self.model,
             "temperature": 0,
+            "reasoning_effort": self.reasoning,
+            "max_tokens": MAX_TOKENS,
+            "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
         }
         r = httpx.post(f"{self.base_url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.key}"}, timeout=TIMEOUT)
         if 400 <= r.status_code < 500 and r.status_code != 429:
             raise JudgeClientError(f"judge returned {r.status_code}: {r.text}")
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"] or ""
+        choice = r.json()["choices"][0]
+        return choice["message"]["content"] or "", choice.get("finish_reason")
 
     def _call(self, prompt: str, n: int) -> list[bool] | None:
         import httpx
 
         for attempt in range(RETRIES):
             try:
-                text = self._post(prompt)
+                text, finish = self._post(prompt)
                 break
             except httpx.HTTPError as e:
                 log.warning("judge request failed (%d/%d): %r", attempt + 1, RETRIES, e)
@@ -143,11 +149,11 @@ class Judge:
         else:
             return None
         same = parse_verdicts(text, n)
-        if same is None:
+        if same is None or finish == "length":
             with self._lock:
                 self.failures_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.failures_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"model": self.model, "prompt": prompt, "raw": text}, ensure_ascii=False) + "\n")
+                    f.write(json.dumps({"model": self.model, "finish_reason": finish, "prompt": prompt, "raw": text}, ensure_ascii=False) + "\n")
         return same
 
     def _verdicts(self, prompt: str, n: int, uid: str) -> list[bool] | None:

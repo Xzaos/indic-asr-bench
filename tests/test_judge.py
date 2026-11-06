@@ -139,7 +139,7 @@ def _judge_with_posts(tmp_path, monkeypatch, posts):
         r = posts[min(len(calls), len(posts)) - 1]
         if isinstance(r, Exception):
             raise r
-        return r
+        return r, "stop"
 
     monkeypatch.setattr(j, "_post", post)
     return j, calls
@@ -206,15 +206,20 @@ def test_label_export_lang_filter(tmp_path, monkeypatch):
     assert rows and {r["id"] for r in rows} == {"h1"}
 
 
-def _fake_http(monkeypatch, statuses, body='{"verdicts": [{"i": 1, "same": true}, {"i": 2, "same": true}]}'):
+def _fake_http(monkeypatch, statuses, body='{"verdicts": [{"i": 1, "same": true}, {"i": 2, "same": true}]}', finish="stop"):
     import httpx
 
-    calls = []
+    class Calls(list):
+        bodies = []
+
+    calls = Calls()
+    bodies = calls.bodies = []
 
     def post(url, **kw):
         code = statuses[min(len(calls), len(statuses) - 1)]
         calls.append(code)
-        content = {"choices": [{"message": {"content": body}}]} if code == 200 else {"error": "bad key"}
+        bodies.append(kw["json"])
+        content = {"choices": [{"message": {"content": body}, "finish_reason": finish}]} if code == 200 else {"error": "bad key"}
         return httpx.Response(code, json=content, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", post)
@@ -240,3 +245,27 @@ def test_429_and_5xx_are_still_retried(tmp_path, monkeypatch):
     j.backoff = 0
     _, same = j.judge(*_score())
     assert same == [True, True] and calls == [429, 503, 200]
+
+
+def test_request_body_has_reasoning_json_mode_and_token_budget(tmp_path, monkeypatch):
+    calls = _fake_http(monkeypatch, [200])
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"), reasoning="high")
+    j.judge(*_score())
+    body = calls.bodies[0]
+    assert body["reasoning_effort"] == "high" and body["max_tokens"] == 4096
+    assert body["response_format"] == {"type": "json_object"}
+
+
+def test_reasoning_defaults_to_low_and_is_part_of_the_cache_key(tmp_path):
+    a = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    b = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"), reasoning="high")
+    assert a.reasoning == "low" and a._key("p") != b._key("p")
+
+
+def test_truncated_reply_is_logged_with_finish_reason(tmp_path, monkeypatch):
+    _fake_http(monkeypatch, [200], body='{"verdicts": [{"i": 1, "sa', finish="length")
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    j.backoff = 0
+    _, same = j.judge(*_score())
+    rows = [json.loads(x) for x in (tmp_path / "judge_failures.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert same == [None, None] and rows and all(r["finish_reason"] == "length" for r in rows)
