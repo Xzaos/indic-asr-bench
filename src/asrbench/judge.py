@@ -11,7 +11,8 @@ report costs nothing and the exact verdicts behind a number can be inspected.
 A reply that cannot be parsed, or a call that keeps failing, gives verdicts of
 None (unknown). LLM-WER counts unknown as an error, but the report says how
 many utterances fell back, and raw unparsable replies are kept in
-judge_failures.jsonl next to the cache.
+judge_failures.jsonl next to the cache. A 4xx reply other than 429 raises
+JudgeClientError instead.
 
 Any OpenAI-compatible chat endpoint works. Sarvam's own chat API, a local
 vLLM server and OpenAI all fit.
@@ -91,6 +92,11 @@ def parse_verdicts(text: str, n: int) -> list[bool] | None:
     return same
 
 
+class JudgeClientError(RuntimeError):
+    """A 4xx other than 429: the request or key is wrong, so retrying or
+    falling back would only hide it."""
+
+
 class Judge:
     def __init__(self, model: str, base_url: str | None = None, api_key_env: str = "JUDGE_API_KEY", cache: str = "results/judge_cache.jsonl", workers: int = 8):
         self.model = model
@@ -118,6 +124,8 @@ class Judge:
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
         }
         r = httpx.post(f"{self.base_url}/chat/completions", json=body, headers={"Authorization": f"Bearer {self.key}"}, timeout=TIMEOUT)
+        if 400 <= r.status_code < 500 and r.status_code != 429:
+            raise JudgeClientError(f"judge returned {r.status_code}: {r.text}")
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"] or ""
 

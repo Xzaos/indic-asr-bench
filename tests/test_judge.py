@@ -204,3 +204,39 @@ def test_label_export_lang_filter(tmp_path, monkeypatch):
     main(["label-export", "--manifest", str(man), "--results", str(tmp_path), "--n", "10", "--lang", "hi", "--out", str(out)])
     rows = list(csv.DictReader(open(out, encoding="utf-8")))
     assert rows and {r["id"] for r in rows} == {"h1"}
+
+
+def _fake_http(monkeypatch, statuses, body='{"verdicts": [{"i": 1, "same": true}, {"i": 2, "same": true}]}'):
+    import httpx
+
+    calls = []
+
+    def post(url, **kw):
+        code = statuses[min(len(calls), len(statuses) - 1)]
+        calls.append(code)
+        content = {"choices": [{"message": {"content": body}}]} if code == 200 else {"error": "bad key"}
+        return httpx.Response(code, json=content, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", post)
+    return calls
+
+
+def test_client_error_fails_fast_with_status_and_body(tmp_path, monkeypatch):
+    import pytest
+
+    from asrbench.judge import JudgeClientError
+
+    calls = _fake_http(monkeypatch, [401])
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    j.backoff = 0
+    with pytest.raises(JudgeClientError, match="401.*bad key"):
+        j.judge(*_score())
+    assert calls == [401]
+
+
+def test_429_and_5xx_are_still_retried(tmp_path, monkeypatch):
+    calls = _fake_http(monkeypatch, [429, 503, 200])
+    j = Judge("fake", base_url="http://unused", cache=str(tmp_path / "c.jsonl"))
+    j.backoff = 0
+    _, same = j.judge(*_score())
+    assert same == [True, True] and calls == [429, 503, 200]
