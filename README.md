@@ -27,13 +27,13 @@ On top of that:
 * A paired bootstrap test between every system and the best one, so "model A beats model B" comes with a p-value instead of two overlapping numbers.
 * Error buckets from the alignment: orthographic, script mix, number format, word-boundary split or merge, near miss, lexical, deletion, insertion. These show which part of a WER number a better normaliser would erase and which part needs a better model.
 * LLM-WER: an LLM judges each aligned error pair as "same content" or "real error". The judge's verdicts are cached and inspectable.
-* Judge validation. `label-export` samples 50 error pairs, stratified by bucket, into a CSV for hand labelling, and `label-score` reports agreement and Cohen's kappa against my labels. An LLM-WER number without this check is just another model's opinion.
+* Judge validation. `label-export` samples 50 error pairs, stratified by bucket, into a CSV for hand labelling, and `label-score` reports agreement and Cohen's kappa against my labels. Without this check, LLM-WER is one model grading another with nothing to anchor it.
 
 Missing hypotheses (a timed-out API call, a crashed batch) are scored as all deletions, never dropped. Dropping them quietly makes a flaky system look better.
 
 ## Results
 
-Test set: FLEURS test split, a seeded sample of 150 Hindi and 148 Tamil utterances. WER and CER are in %, with 95% bootstrap intervals over utterances. WER is indic+translit. CER uses indic normalisation, which is the CER column the report gives. Full tables with every mode are in [results/report.md](results/report.md).
+Test set: FLEURS test split, a seeded sample of 150 Hindi and 148 Tamil utterances. WER and CER are in %, with 95% bootstrap intervals over utterances. WER is indic+translit. CER is indic, since the report doesn't compute a translit CER. Full tables with every mode are in [results/report.md](results/report.md).
 
 Hindi (3417 reference words):
 
@@ -74,13 +74,13 @@ I checked the judge against my own labels on 50 Hindi pairs, stratified by error
 * The judge disagreed with me 10 times. It was lenient 6 times (it said same content where I said real error) and strict 4 times (the reverse).
 * split_merge and script_mix were 6/6 each. number_format was 3/6.
 
-The number weakness has a clear cause. A spelled-out number gets split across several token pairs in the alignment, and each pair makes no sense alone. The judge sees "400" against "सौ" and has no way to know the rest of the phrase. A judge that saw the whole span would likely do better here, but I haven't tried it.
+Numbers are weak because a spelled-out number gets split across several token pairs in the alignment, and each pair makes no sense alone. The judge sees "400" against "सौ" and has no way to know the rest of the phrase. I had the same trouble: my own labels on the number rows aren't fully consistent with each other. A judge that saw the whole span would probably do better here, but I haven't tried it.
 
 Because the judge is more often lenient than strict, LLM-WER is probably optimistic. It is also validated on Hindi only.
 
 ### Where models fail
 
-Whisper's errors are mostly near_miss and lexical. On Hindi, whisper-large-v3 has 404 near_miss and 320 lexical errors, against 60 orthographic and 12 script_mix. The gap to the other systems is acoustic, not formatting, and no normaliser will close it.
+Whisper's errors are mostly near_miss and lexical. On Hindi, whisper-large-v3 has 404 near_miss and 320 lexical errors, against 60 orthographic and 12 script_mix. The gap to the other systems comes from misheard words rather than formatting, so better normalisation won't close it.
 
 Tamil has high split_merge counts for every system (96 for indicconformer-ctc, 114 for saaras-v4, against 20 to 34 on Hindi). Tamil is agglutinative, so a word boundary is often a judgement call. CER is the fairer metric there.
 
@@ -128,7 +128,7 @@ Within a run of consecutive errors, the aligner's choice of which token is a del
 
 Whisper truncates audio at 30 s and the Sarvam REST API rejects anything longer, so clips over 30 s are dropped from the manifest (`asrbench filter`, or `--max-sec` on `prepare`) and are excluded for every system.
 
-FLEURS is read speech. It says little about conversational or telephone audio, where the gap between these systems is likely larger.
+FLEURS is read speech. It says little about conversational or telephone audio, where the gap between these systems may well be larger.
 
 The test set is 150 Hindi and 148 Tamil utterances. The judge validation rests on one annotator (me) and 50 pairs. There is no LLM-WER for Tamil, and the judge check covers Hindi only.
 
