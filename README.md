@@ -1,4 +1,4 @@
-# indic-asr-bench
+# Indic ASR Bench
 
 How much of an Indic ASR model's word error rate is the model mishearing, and how much is the scorer disagreeing with a spelling? This repo scores Whisper, AI4Bharat's IndicConformer and Sarvam's Saaras on Hindi and Tamil with that question in mind.
 
