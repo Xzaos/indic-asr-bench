@@ -2,7 +2,7 @@
 
 How much of an Indic ASR model's word error rate is the model mishearing, and how much is the scorer disagreeing with a spelling? This repo scores Whisper, AI4Bharat's IndicConformer and Sarvam's Saaras on Hindi and Tamil with that question in mind.
 
-Headline result: _ (fill in from results/report.md after the run)
+Headline result: saaras-v4 has the lowest error on both languages. The table is under Results.
 
 ## Why plain WER isn't enough here
 
@@ -33,22 +33,58 @@ Missing hypotheses (a timed-out API call, a crashed batch) are scored as all del
 
 ## Results
 
-Test set: FLEURS test split, seeded sample of _ utterances per language. Full tables with every interval are in [results/report.md](results/report.md).
+Test set: FLEURS test split, a seeded sample of 150 Hindi and 148 Tamil utterances. WER and CER are in %, with 95% bootstrap intervals over utterances. WER is indic+translit. CER uses indic normalisation, which is the CER column the report gives. Full tables with every mode are in [results/report.md](results/report.md).
 
-| system | hi WER basic | hi WER indic+translit | hi LLM-WER | ta WER basic | ta WER indic |
-|---|---|---|---|---|---|
-| whisper-large-v3 | _ | _ | _ | _ | _ |
-| whisper-large-v3-turbo | _ | _ | _ | _ | _ |
-| indicconformer (CTC) | _ | _ | _ | _ | _ |
-| saaras:v3 | _ | _ | _ | _ | _ |
-| saaras:v4 | _ | _ | _ | _ | _ |
-| saaras:v4, codemix mode | _ | _ | _ | _ | _ |
+Hindi (3417 reference words):
 
-The codemix row is the one to watch: that mode writes English words in Latin on purpose, so its basic WER should be much worse than its translit-aware WER. If the gap is small, the translit matcher is missing cases.
+| system | WER | CER |
+|---|---|---|
+| saaras-v4 | 5.52 [4.55, 6.51] | 2.73 [2.10, 3.42] |
+| saaras-v4-codemix | 7.61 [6.41, 8.87] | 15.67 [13.25, 18.21] |
+| indicconformer-ctc | 9.67 [8.14, 11.24] | 4.77 [3.80, 5.78] |
+| whisper-large-v3 | 26.51 [23.74, 29.97] | 12.96 [10.81, 15.54] |
+| whisper-turbo | 28.63 [26.43, 31.02] | 13.69 [11.84, 15.69] |
 
-Judge agreement with my labels: _ / 50, kappa _.
+Tamil (2426 reference words):
 
-What I read from these: _
+| system | WER | CER |
+|---|---|---|
+| saaras-v4 | 21.66 [18.75, 24.63] | 6.58 [4.49, 8.93] |
+| indicconformer-ctc | 27.81 [25.07, 30.74] | 9.03 [7.21, 11.17] |
+| whisper-large-v3 | 54.01 [50.29, 58.00] | 19.40 [15.90, 23.41] |
+| whisper-turbo | 71.38 [64.79, 81.75] | 23.16 [19.98, 27.15] |
+
+saaras-v4 is best on both languages, with paired bootstrap p<0.001 against every other system.
+
+The codemix CER is high because indic normalisation has no translit matching, so English words written in Latin count as character errors. The WER column is the fairer one for that row.
+
+### Why normalisation matters
+
+Raw WER mixes model errors with spelling and formatting choices. For indicconformer-ctc on Hindi, raw WER is 21.69 and indic WER is 9.73. More than half of its raw errors are punctuation, nukta, digit and similar differences, not misheard words.
+
+The saaras-v4-codemix case shows the translit match at work. That mode writes English words in Latin on purpose, and the bucketer counts 165 script_mix errors for it, against 3 for saaras-v4. Indic WER is 12.40. With the translit match it drops to 7.61. Plain WER penalises output that is correct, just in a different script from the reference.
+
+### LLM-WER and how far to trust it
+
+For each substitution pair from the alignment, the judge (sarvam-105b) decides whether the two tokens carry the same spoken content or are a real error. Same content is not counted. Hindi LLM-WER ranges from 2.38 for saaras-v4 to 15.45 for whisper-turbo (full table in the report).
+
+I checked the judge against my own labels on 50 Hindi pairs, stratified by error bucket. I was the only annotator and the judge's verdicts were hidden while I labelled. Raw output is in [results/judge_validation.txt](results/judge_validation.txt) and the pairs are in [results/judge_labels.csv](results/judge_labels.csv).
+
+* Agreement is 0.80 and Cohen's kappa is 0.58.
+* The judge disagreed with me 10 times. It was lenient 6 times (it said same content where I said real error) and strict 4 times (the reverse).
+* split_merge and script_mix were 6/6 each. number_format was 3/6.
+
+The number weakness has a clear cause. A spelled-out number gets split across several token pairs in the alignment, and each pair makes no sense alone. The judge sees "400" against "सौ" and has no way to know the rest of the phrase. A judge that saw the whole span would likely do better here, but I haven't tried it.
+
+Because the judge is more often lenient than strict, LLM-WER is probably optimistic. It is also validated on Hindi only.
+
+### Where models fail
+
+Whisper's errors are mostly near_miss and lexical. On Hindi, whisper-large-v3 has 404 near_miss and 320 lexical errors, against 60 orthographic and 12 script_mix. The gap to the other systems is acoustic, not formatting, and no normaliser will close it.
+
+Tamil has high split_merge counts for every system (96 for indicconformer-ctc, 114 for saaras-v4, against 20 to 34 on Hindi). Tamil is agglutinative, so a word boundary is often a judgement call. CER is the fairer metric there.
+
+The wide Tamil interval for whisper-turbo (64.79 to 81.75) comes from a runaway output on fleurs_ta_000487. The hypothesis is a long run of repeated digits instead of a transcript.
 
 ## Running it
 
@@ -93,6 +129,8 @@ Within a run of consecutive errors, the aligner's choice of which token is a del
 Whisper truncates audio at 30 s and the Sarvam REST API rejects anything longer, so clips over 30 s are dropped from the manifest (`asrbench filter`, or `--max-sec` on `prepare`) and are excluded for every system.
 
 FLEURS is read speech. It says little about conversational or telephone audio, where the gap between these systems is likely larger.
+
+The test set is 150 Hindi and 148 Tamil utterances. The judge validation rests on one annotator (me) and 50 pairs. There is no LLM-WER for Tamil, and the judge check covers Hindi only.
 
 The number-format bucket only detects that digits are involved; it doesn't verify that "500" and "पांच सौ" are the same number.
 

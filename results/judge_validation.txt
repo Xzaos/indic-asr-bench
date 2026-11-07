@@ -1,0 +1,28 @@
+{
+  "n": 50,
+  "judge_unknown": 0,
+  "agreement": 0.8,
+  "kappa": 0.5840266222961732,
+  "judge_lenient": 6,
+  "judge_strict": 4,
+  "per_bucket": {
+    "deletion": "6/7",
+    "insertion": "5/7",
+    "lexical": "5/6",
+    "near_miss": "4/6",
+    "number_format": "3/6",
+    "orthographic": "5/6",
+    "script_mix": "6/6",
+    "split_merge": "6/6"
+  }
+}
+[number_format] ref='11' hyp='से' human=0 judge=1
+[near_miss] ref='गंभीर' hyp='गंबीर' human=0 judge=1
+[insertion] ref='' hyp='पुनर' human=1 judge=0
+[number_format] ref='400' hyp='सौ' human=1 judge=0
+[deletion] ref='की' hyp='' human=1 judge=0
+[number_format] ref='1966' hyp='छाँचट' human=1 judge=0
+[insertion] ref='' hyp='उन्नीस' human=0 judge=1
+[orthographic] ref='बोडा' hyp='बोड़ा' human=0 judge=1
+[lexical] ref='रिहायशी' hyp='रहियासी' human=0 judge=1
+[near_miss] ref='उद्यानों' hyp='उध्यानों' human=0 judge=1
